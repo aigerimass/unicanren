@@ -449,38 +449,6 @@ let eval ?(trace_svars = false) ?(trace_uni = false) ?(trace_calls = false) =
       Eio_main.run @@ fun env ->
         make_task_list ~domain_mgr:(Eio.Stdenv.domain_mgr env);
       return (merge_stream queue)
-    (*
-      let c = Chan.make_unbounded () in
-      let rec force_stream x =
-        match x with
-        | Stream.Cons (x, y) ->
-          Chan.send c x;
-          force_stream (Lazy.force y)
-        | Stream.Nil -> ()
-        | _ -> assert false
-      in
-      let* st = read in
-      let pool = Task.setup_pool ~num_domains:12 () in
-      let rec merge_stream c =
-        match Chan.recv_poll c with
-        | Some x ->
-          (* let* () = put st in *)
-          (* return (Stream.mplus (Stream.return x)) >>= (fun _ -> merge_stream c) *)
-         Stream.mplus (Stream.return x) (Stream.Thunk (lazy (merge_stream c)))
-        | None ->  Stream.Nil
-      in
-      let make_task acc =
-        Task.async pool (fun _ ->
-          force_stream (StateMonad.run (eval acc) st |> Result.get_ok))
-      in
-      let make_task_list lst =
-
-        Stdlib.List.map make_task lst
-      in
-      Task.run pool (fun () ->
-        Stdlib.List.iter (fun x -> Task.await pool x) (make_task_list lst));
-      return (merge_stream c)
-    *)
     | Conj [] -> assert false
     | Conj [ x ] -> eval x
     | Conj (x :: xs) ->
