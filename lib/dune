@@ -1,7 +1,8 @@
 (library
  (name unicanren)
- (modules lib lib_tests test_numbers)
+ (modules lib lib_tests test_numbers promises lib_paral_tests)
  (libraries
+ eio_main
   ;GT
   )
  ;  (instrumentation
