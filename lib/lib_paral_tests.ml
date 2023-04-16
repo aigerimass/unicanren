@@ -19,7 +19,7 @@ let appendo_body =
 ;;
 
 let reverso_body =
-  CondePar
+  Conde
     [ Conj [ Unify (Var "xy", Nil); Unify (Var "yx", Nil) ]
     ; Fresh
         ( "h"
@@ -41,20 +41,17 @@ let funct x symbol = Term.Cons (Symbol symbol, x)
 
 (* lists *)
 let lst_y len = makerev funct len Nil "y"
-let lst_x len = makerev funct len Nil "c"
+let lst_x len = makerev funct len Nil "x"
 
 
 let run goal env = 
   let time = Sys.time() in
-  match (StateMonad.run (eval  goal) env) with
-  | Result.Ok r -> 
-    Stream.take ~n:2 r
-    |> (fun xs ->
-      Format.printf "Answers: %d\nTime: %f\n" (List.length xs) (Sys.time() -. time);
-      List.iter (fun st -> Format.printf "%a\n" Value.pp (Value.walk st (Value.var 10))
-      ) xs
-    )
-  | _ -> Format.printf "el problema\n"
+  Stream.take ~n:(-1) (Result.get_ok (StateMonad.run (eval goal) env))
+  |> (fun xs ->
+    Format.printf "Answers: %d\nTime: %f\n" (List.length xs) (Sys.time() -. time);
+    List.iter (fun st -> Format.printf "%a\n" Value.pp (Value.walk st (Value.var 10))
+    ) xs
+  )
 
 
 let test1 () = 

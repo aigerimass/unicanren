@@ -437,18 +437,28 @@ let eval ?(trace_svars = false) ?(trace_uni = false) ?(trace_calls = false) =
       let* st = read in
       let rec merge_stream queue =
         match Eio.Stream.take_nonblocking queue with 
-        | Some x -> Stream.mplus (Stream.return x) (Stream.Thunk (lazy (merge_stream queue)))
-        | None -> Stream.Nil
+        | Some x -> 
+          let* () = put st in
+          return (Stream.mplus (Stream.return x)) <*> merge_stream queue
+          (* Stream.mplus (Stream.return x) (Stream.Thunk (lazy (merge_stream queue))) *)
+        | None -> return Stream.Nil
       in
-      let make_task acc ~domain_mgr =
+      let make_par_task acc ~domain_mgr =
         Eio.Domain_manager.run domain_mgr (fun () -> force_stream (StateMonad.run (eval acc) st |> Result.get_ok))
       in
-      let make_task_list ~domain_mgr =
-        Stdlib.List.iter (make_task ~domain_mgr:domain_mgr) lst
+      let make_non_par_task acc = 
+        force_stream (StateMonad.run (eval acc) st |> Result.get_ok) (* нужно ли форсировать непараллельные? *)
+      in
+      let predicate = false (* когда параллелить *)
+      in
+      let make_task_list =
+        if predicate then 
+          Eio_main.run @@ fun env ->
+          Stdlib.List.iter (make_par_task ~domain_mgr:(Eio.Stdenv.domain_mgr env)) lst
+        else Stdlib.List.iter make_non_par_task lst
       in 
-      Eio_main.run @@ fun env ->
-        make_task_list ~domain_mgr:(Eio.Stdenv.domain_mgr env);
-      return (merge_stream queue)
+      make_task_list;
+      merge_stream queue
     | Conj [] -> assert false
     | Conj [ x ] -> eval x
     | Conj (x :: xs) ->
