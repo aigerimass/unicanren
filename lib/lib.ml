@@ -25,6 +25,7 @@ type goal =
   | Unify of Term.t * Term.t
   | Conj of goal list
   | Conde of goal list (* TODO: make non-empty list here *)
+  | CondePar of goal list (* TODO *)
   | Fresh of string * goal
   | Call of string * Term.t list
   | TraceSVars of string list
@@ -39,6 +40,8 @@ let pp_goal =
     | Conde [] | Conj [] -> assert false
     | Conde xs ->
       fprintf ppf "(conde [ %a ])" (pp_print_list ~pp_sep:pp_print_space helper) xs
+    | CondePar xs ->
+      fprintf ppf "(condePar [ %a ])" (pp_print_list ~pp_sep:pp_print_space helper) xs
     | Conj xs -> pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf " && ") helper ppf xs
     | Fresh (s, g) -> fprintf ppf "(fresh (%s) %a)" s helper g
     | Call (name, args) ->
@@ -299,41 +302,40 @@ module Stream = struct
   type 'a t =
     | Nil (** Empty stream *)
     | Cons of 'a * 'a t lazy_t (** An answer and lazy calculation of rest of answers *)
-  (*
     | Thunk of 'a t lazy_t (** Deferred evaluation of answers *)
-*)
 
   let rec pp ppf = function
     | Nil -> fprintf ppf "Nil"
     | Cons (_, (lazy tl)) -> fprintf ppf "(Cons (_, %a))" pp tl
+    | Thunk _ -> fprintf ppf "(Thunk _)"
   ;;
 
   let nil = Nil
   let return x = Cons (x, lazy Nil)
 
-  (* let cons x xs = Cons (x, xs) *)
-  (* let from_fun zz = Thunk (lazy (zz ())) *)
+  let cons x xs = Cons (x, xs)
+  let from_fun zz = Thunk (lazy (zz ()))
 
-  (*   let force = function
+  let force = function
     | Thunk (lazy zz) -> zz
     | xs -> xs
   ;;
- *)
+ 
   let rec mplus : 'a. 'a t -> 'a t -> 'a t =
    fun x y ->
     (* printf "Stream.mplus of `%a` and `%a`\n%!" pp x pp y; *)
     match x, y with
     | Nil, _ -> y
-    (* | Thunk l, r -> mplus r (Lazy.force l) *)
+    | Thunk l, r -> mplus r (Lazy.force l)
     | Cons (x, l), r -> Cons (x, lazy (mplus r (Lazy.force l)))
  ;;
 
-  (*   let rec bind s f =
+  let rec bind s f =
     match s with
     | Nil -> Nil
     | Cons (x, s) -> mplus (f x) (from_fun (fun () -> bind (Lazy.force s) f))
     | Thunk zz -> from_fun (fun () -> bind (Lazy.force zz) f)
-  ;; *)
+  ;;
 
   let from_funm : (unit -> 'a t state) -> 'a t state =
    fun f ->
@@ -349,9 +351,9 @@ module Stream = struct
     let open StateMonad.Syntax in
     let* init = s in
     match init with
-    (* | Thunk zz ->
+   | Thunk zz ->
       (* Bullshit ? *)
-      from_funm (fun () -> bindm (return (Lazy.force zz)) f) *)
+      from_funm (fun () -> bindm (return (Lazy.force zz)) f)
     | Nil -> return Nil
     | Cons (x, s) ->
       let* l = f x in
@@ -365,7 +367,7 @@ module Stream = struct
       | Nil -> []
       | _ when n = 0 -> []
       | Cons (s, (lazy tl)) -> s :: helper (n - 1) tl
-      (* | Thunk (lazy zz) -> helper n zz *)
+      | Thunk (lazy zz) -> helper n zz 
     in
     helper n
   ;;
@@ -421,6 +423,42 @@ let eval ?(trace_svars = false) ?(trace_uni = false) ?(trace_calls = false) =
           return (Stream.mplus acc) <*> eval y)
         (eval x)
         xs
+    | CondePar [] -> assert false
+    | CondePar lst -> 
+      let queue = Eio.Stream.create max_int in
+      let rec force_stream x = 
+        match x with
+        | Stream.Cons (x, y) ->
+          Eio.Stream.add queue x;
+          force_stream (Lazy.force y)
+        | Stream.Nil -> ()
+        | _ -> assert false
+      in
+      let* st = read in
+      let rec merge_stream queue =
+        match Eio.Stream.take_nonblocking queue with 
+        | Some x -> 
+          let* () = put st in
+          return (Stream.mplus (Stream.return x)) <*> merge_stream queue
+          (* Stream.mplus (Stream.return x) (Stream.Thunk (lazy (merge_stream queue))) *)
+        | None -> return Stream.Nil
+      in
+      let make_par_task acc ~domain_mgr =
+        Eio.Domain_manager.run domain_mgr (fun () -> force_stream (StateMonad.run (eval acc) st |> Result.get_ok))
+      in
+      let make_non_par_task acc = 
+        force_stream (StateMonad.run (eval acc) st |> Result.get_ok) (* нужно ли форсировать непараллельные? *)
+      in
+      let predicate = false (* когда параллелить *)
+      in
+      let make_task_list =
+        if predicate then 
+          Eio_main.run @@ fun env ->
+          Stdlib.List.iter (make_par_task ~domain_mgr:(Eio.Stdenv.domain_mgr env)) lst
+        else Stdlib.List.iter make_non_par_task lst
+      in 
+      make_task_list;
+      merge_stream queue
     | Conj [] -> assert false
     | Conj [ x ] -> eval x
     | Conj (x :: xs) ->

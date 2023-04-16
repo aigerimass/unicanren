@@ -23,6 +23,7 @@ type goal =
   | Unify of Term.t * Term.t (** Unification *)
   | Conj of goal list (** Conjunction *)
   | Conde of goal list (** (interleaved) Disjunction *)
+  | CondePar of goal list (** parallel disjunction *)
   | Fresh of string * goal (** Creating of fresh (existential) variables *)
   | Call of string * Term.t list (** Call to another relation with arguments *)
   | TraceSVars of string list (** Tracing of some variables. Only for debugging *)
@@ -117,7 +118,7 @@ type 'a state = (st, 'a) StateMonad.t
 (** A stream of answers of calculation *)
 module Stream : sig
   type 'a t
-
+  val mplus : 'a t -> 'a t -> 'a t
   val take : ?n:int -> 'a t -> 'a list
 end
 
